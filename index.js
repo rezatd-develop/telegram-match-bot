@@ -1,3 +1,6 @@
+console.log("BOT_TOKEN exists:", !!process.env.BOT_TOKEN);
+console.log("BOT_TOKEN length:", process.env.BOT_TOKEN?.length);
+
 require('dotenv').config();
 
 const { Telegraf, Markup } = require('telegraf');

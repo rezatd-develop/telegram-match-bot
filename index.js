@@ -1,16 +1,19 @@
 require('dotenv').config();
 
-const { HttpsProxyAgent } = require('https-proxy-agent');
 const { Telegraf, Markup } = require('telegraf');
 const db = require('./db');
 
-const agent = new HttpsProxyAgent('http://127.0.0.1:10808');
+// حذف پروکسی و اتصال مستقیم
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
-const bot = new Telegraf(process.env.BOT_TOKEN, {
-    telegram: {
-        agent
-    }
-});
+// دیتابیس کوچک استان‌ها و شهرها
+const PLACES = {
+    'تهران': ['تهران', 'شهریار', 'اسلامشهر', 'ری', 'پاکدشت'],
+    'اصفهان': ['اصفهان', 'کاشان', 'خمینی‌شهر', 'نجف‌آباد'],
+    'فارس': ['شیراز', 'مرودشت', 'جهرم', 'فسا']
+};
+
+const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
 const MAIN_BUTTONS = [
     '🏋️ کجا میخوای بری؟',
@@ -26,25 +29,23 @@ const MAIN_BUTTONS = [
     '⚙️ ویرایش پروفایل',
     '❌ لغو ساخت پروفایل',
     '❌ لغو ویرایش',
-    '✏️ نام', '✏️ سن', '✏️ شهر', '✏️ جنسیت', '✏️ عکس'
+    '❌ لغو جستجو',
+    '👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر'
 ];
 
 function isProfileComplete(user) {
-    return !!(user && user.age && user.city && user.gender && user.photo_file_id);
+    return !!(user && user.age && user.province && user.city && user.region && user.gender && user.photo_file_id);
 }
 
 /* =========================
-    Menus
+    Menus (منوی هوشمند بر اساس وضعیت کاربر)
 ========================= */
 
 async function mainMenu(userId) {
-    const [rows] = await db.query(
-        `SELECT status FROM users WHERE telegram_id=?`,
-        [userId]
-    );
-
+    const [rows] = await db.query(`SELECT status FROM users WHERE telegram_id=?`, [userId]);
     const status = rows[0]?.status || 'idle';
 
+    // ۱. اگر کاربر در حال چت باشد
     if (status === 'chatting') {
         return Markup.keyboard([
             ['🏋️ کجا میخوای بری؟'],
@@ -52,6 +53,14 @@ async function mainMenu(userId) {
         ]).resize();
     }
 
+    // ۲. اگر کاربر در صف انتظار پارتنر باشد (فقط دکمه لغو جستجو)
+    if (status === 'waiting') {
+        return Markup.keyboard([
+            ['❌ لغو جستجو']
+        ]).resize();
+    }
+
+    // ۳. منوی عادی در وضعیت آزاد (idle)
     return Markup.keyboard([
         ['🏋️ کجا میخوای بری؟'],
         ['🎯 پارتنرمو پیدا کن'],
@@ -67,10 +76,9 @@ function categoryMenu() {
     ]).resize();
 }
 
-// منوی انتخاب بخش برای ویرایش
 function editProfileMenu() {
     return Markup.keyboard([
-        ['✏️ نام', '✏️ سن', '✏️ شهر'],
+        ['✏️ نام', '✏️ سن', '✏️ محل سکونت'],
         ['✏️ جنسیت', '✏️ عکس'],
         ['❌ لغو ویرایش']
     ]).resize();
@@ -119,7 +127,7 @@ bot.hears('🔙 برگشت', async (ctx) => {
 });
 
 /* =========================
-    Find Partner
+    Find Partner & Matching Logic
 ========================= */
 
 bot.hears('🎯 پارتنرمو پیدا کن', async (ctx) => {
@@ -143,15 +151,42 @@ bot.hears('🎯 پارتنرمو پیدا کن', async (ctx) => {
     }
 
     if (me.status === 'chatting') return ctx.reply('💬 در حال حاضر داخل یک گفتگو هستی.');
-    if (me.status === 'waiting') return ctx.reply('🔎 در حال حاضر در صف انتظار هستی، لطفاً کمی شکیبا باش...');
+    if (me.status === 'waiting') {
+        return ctx.reply('🔎 در حال حاضر در صف انتظار هستی...', await mainMenu(myId));
+    }
 
-    const [rows] = await db.query(`
-        SELECT * FROM users WHERE category=? AND telegram_id != ? AND status='waiting' LIMIT 1
-    `, [me.category, myId]);
+    return ctx.reply(
+        '📍 ترجیح میدی پارتنرت چقدر بهت نزدیک باشه؟',
+        Markup.keyboard([
+            ['👥 افراد نزدیک (هم‌محله‌ای)'],
+            ['🏙️ کل سطح شهر'],
+            ['❌ لغو ویرایش']
+        ]).resize()
+    );
+});
+
+// هندل کردن انتخاب محدوده جستجو و قفل کردن منو روی «لغو جستجو»
+bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر'], async (ctx) => {
+    const myId = ctx.from.id;
+    const me = ctx.userState;
+    if (!me) return;
+
+    const scope = ctx.message.text;
+    let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
+    let queryParams = [me.category, me.city, myId];
+
+    if (scope === '👥 افراد نزدیک (هم‌محله‌ای)') {
+        query += ` AND region=?`;
+        queryParams.push(me.region);
+    }
+
+    query += ` LIMIT 1`;
+    const [rows] = await db.query(query, queryParams);
 
     if (rows.length === 0) {
+        // تغییر وضعیت به waiting - از این لحظه منو به لغو جستجو تبدیل می‌شود
         await db.query(`UPDATE users SET status='waiting' WHERE telegram_id=?`, [myId]);
-        return ctx.reply('🔎 در حال جستجوی پارتنر...');
+        return ctx.reply('🔎 در حال جستجوی پارتنر... لطفاً منتظر بمانید.', await mainMenu(myId));
     }
 
     const partner = rows[0];
@@ -159,7 +194,14 @@ bot.hears('🎯 پارتنرمو پیدا کن', async (ctx) => {
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
 
     await ctx.reply('🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(myId));
-    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!', await mainMenu(partner.telegram_id)); } catch (e) {}
+    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(partner.telegram_id)); } catch (e) {}
+});
+
+// هندلر دکمه خروج از صف (لغو جستجو)
+bot.hears('❌ لغو جستجو', async (ctx) => {
+    const myId = ctx.from.id;
+    await db.query(`UPDATE users SET status='idle' WHERE telegram_id=?`, [myId]);
+    await ctx.reply('🛑 جستجو لغو شد و شما از صف خارج شدید.', await mainMenu(myId));
 });
 
 /* =========================
@@ -185,19 +227,17 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
     const me = ctx.userState;
     if (!me) return;
 
-    if (!isProfileComplete(me) || !me.category) return ctx.reply('⚠️ اطلاعات شما ناقص است.', await mainMenu(myId));
-
     if (me.partner_id) {
         await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [me.partner_id]);
         try { await bot.telegram.sendMessage(me.partner_id, '🔄 طرف مقابل به سراغ نفر بعدی رفت.', await mainMenu(me.partner_id)); } catch (e) {}
     }
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
-    const [partners] = await db.query(`SELECT * FROM users WHERE category=? AND telegram_id != ? AND status='waiting' LIMIT 1`, [me.category, myId]);
+    const [partners] = await db.query(`SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting' LIMIT 1`, [me.category, me.city, myId]);
 
     if (partners.length === 0) {
         await db.query(`UPDATE users SET status='waiting' WHERE telegram_id=?`, [myId]);
-        return ctx.reply('🔎 در حال جستجوی نفر بعدی...');
+        return ctx.reply('🔎 در حال جستجوی نفر بعدی در سطح شهر...', await mainMenu(myId));
     }
 
     const partner = partners[0];
@@ -215,28 +255,21 @@ bot.hears('👤 پروفایل', async (ctx) => {
     const user = ctx.userState;
     if (!user) return ctx.reply('لطفاً ابتدا ربات را /start کنید.');
 
-    // اگر پروفایل کامل دارد، آن را نشان بده و دکمه ویرایش را بگذار
     if (isProfileComplete(user)) {
         return ctx.replyWithPhoto(user.photo_file_id, {
-            caption: `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ شهر: ${user.city}\n⚧️ جنسیت: ${user.gender}`,
-            ...Markup.keyboard([
-                ['⚙️ ویرایش پروفایل'],
-                ['🔙 برگشت']
-            ]).resize()
+            caption: `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}`,
+            ...Markup.keyboard([['⚙️ ویرایش پروفایل'], ['🔙 برگشت']]).resize()
         });
     }
 
-    // اگر پروفایل نداشت، اجبار به ساخت اولیه
     await db.query(`UPDATE users SET profile_step='name' WHERE telegram_id=?`, [ctx.from.id]);
     await ctx.reply('👤 ساخت پروفایل جدید\n\nلطفاً نام خود را وارد کن:', Markup.keyboard([['❌ لغو ساخت پروفایل']]).resize());
 });
 
-// ورود به بخش انتخاب بخش برای ویرایش
 bot.hears('⚙️ ویرایش پروفایل', async (ctx) => {
     await ctx.reply('🛠️ کدام بخش از پروفایل خود را می‌خواهید تغییر دهید؟', editProfileMenu());
 });
 
-// لغو فرآیندها
 bot.hears('❌ لغو ساخت پروفایل', async (ctx) => {
     await db.query(`UPDATE users SET profile_step=NULL WHERE telegram_id=?`, [ctx.from.id]);
     await ctx.reply('❌ فرآیند ساخت پروفایل لغو شد.', await mainMenu(ctx.from.id));
@@ -244,62 +277,78 @@ bot.hears('❌ لغو ساخت پروفایل', async (ctx) => {
 
 bot.hears('❌ لغو ویرایش', async (ctx) => {
     await db.query(`UPDATE users SET profile_step=NULL WHERE telegram_id=?`, [ctx.from.id]);
-    await ctx.reply('🏠 ویرایش لغو شد.', await mainMenu(ctx.from.id));
+    await ctx.reply('🏠 منوی اصلی', await mainMenu(ctx.from.id));
 });
 
-// هندل کردن دکمه‌های گزینش فیلد برای ویرایش (تک‌مرحله‌ای)
-bot.hears(['✏️ نام', '✏️ سن', '✏️ شهر', '✏️ جنسیت', '✏️ عکس'], async (ctx) => {
+bot.hears(['✏️ نام', '✏️ سن', '✏️ محل سکونت', '✏️ جنسیت', '✏️ عکس'], async (ctx) => {
     const field = ctx.message.text;
-    let step = '';
-    let msg = '';
-    let keyboard = Markup.keyboard([['❌ لغو ویرایش']]).resize();
+    let step = '', msg = '', keyboard = Markup.keyboard([['❌ لغو ویرایش']]).resize();
 
-    if (field === '✏️ نام') { step = 'edit_name'; msg = '👤 نام جدید خود را وارد کنید:'; }
-    else if (field === '✏️ سن') { step = 'edit_age'; msg = '🎂 سن جدید خود را وارد کنید:'; }
-    else if (field === '✏️ شهر') { step = 'edit_city'; msg = '🏙️ شهر جدید خود را وارد کنید:'; }
+    if (field === '✏️ نام') { step = 'edit_name'; msg = '👤 نام جدید را وارد کنید:'; }
+    else if (field === '✏️ سن') { step = 'edit_age'; msg = '🎂 سن جدید را وارد کنید:'; }
+    else if (field === '✏️ محل سکونت') { 
+        step = 'edit_province'; 
+        msg = '🗺️ استان جدید خود را انتخاب کنید:'; 
+        keyboard = Markup.keyboard([...Object.keys(PLACES).map(p => [p]), ['❌ لغو ویرایش']]).resize();
+    }
     else if (field === '✏️ جنسیت') { 
-        step = 'edit_gender'; 
-        msg = '⚧️ جنسیت جدید خود را انتخاب کنید:'; 
+        step = 'edit_gender'; msg = '⚧️ جنسیت جدید را انتخاب کنید:'; 
         keyboard = Markup.keyboard([['👨 مرد'], ['👩 زن'], ['❌ لغو ویرایش']]).resize();
     }
-    else if (field === '✏️ عکس') { step = 'edit_photo'; msg = '📸 عکس جدید خود را ارسال کنید:'; }
+    else if (field === '✏️ عکس') { step = 'edit_photo'; msg = '📸 عکس جدید را ارسال کنید:'; }
 
     await db.query(`UPDATE users SET profile_step=? WHERE telegram_id=?`, [step, ctx.from.id]);
     await ctx.reply(msg, keyboard);
 });
 
 /* =========================
-    Message Step & Forward Handlers
+    Message Step & Wizard Handlers
 ========================= */
 
 bot.on('message', async (ctx, next) => {
     const user = ctx.userState;
     if (!user || !user.profile_step) return next();
-    if (['❌ لغو ساخت پروفایل', '❌ لغو ویرایش'].includes(ctx.message.text)) return next();
+    if (['❌ لغو ساخت پروفایل', '❌ لغو ویرایش', '❌ لغو جستجو'].includes(ctx.message.text)) return next();
 
     const currentStep = user.profile_step;
+    const input = ctx.message.text;
 
-    // --- بخش اول: ساخت اولیه پروفایل (پشت سر هم) ---
+    // --- ساخت اولیه پروفایل ---
     if (currentStep === 'name') {
-        if (!ctx.message.text) return ctx.reply('لطفاً نام را متنی ارسال کن.');
-        await db.query(`UPDATE users SET first_name=?, profile_step='age' WHERE telegram_id=?`, [ctx.message.text, ctx.from.id]);
+        if (!input) return ctx.reply('لطفاً نام را متنی ارسال کن.');
+        await db.query(`UPDATE users SET first_name=?, profile_step='age' WHERE telegram_id=?`, [input, ctx.from.id]);
         return ctx.reply('🎂 سنت چند ساله؟', Markup.keyboard([['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'age') {
-        const age = parseInt(ctx.message.text);
+        const age = parseInt(input);
         if (isNaN(age) || age < 10 || age > 100) return ctx.reply('سن معتبر وارد کن.');
-        await db.query(`UPDATE users SET age=?, profile_step='city' WHERE telegram_id=?`, [age, ctx.from.id]);
-        return ctx.reply('🏙️ شهر محل سکونتت چیه؟', Markup.keyboard([['❌ لغو ساخت پروفایل']]).resize());
+        await db.query(`UPDATE users SET age=?, profile_step='province' WHERE telegram_id=?`, [age, ctx.from.id]);
+        
+        const provinceButtons = Object.keys(PLACES).map(p => [p]);
+        return ctx.reply('🗺️ استان محل سکونتت رو انتخاب کن:', Markup.keyboard([...provinceButtons, ['❌ لغو ساخت پروفایل']]).resize());
+    }
+    if (currentStep === 'province') {
+        if (!PLACES[input]) return ctx.reply('لطفاً یکی از استان‌های لیست را انتخاب کنید.');
+        await db.query(`UPDATE users SET province=?, profile_step='city' WHERE telegram_id=?`, [input, ctx.from.id]);
+        
+        const cityButtons = PLACES[input].map(c => [c]);
+        return ctx.reply('🏙️ حالا شهرت رو انتخاب کن:', Markup.keyboard([...cityButtons, ['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'city') {
-        if (!ctx.message.text) return ctx.reply('لطفاً نام شهر را متنی بفرست.');
-        await db.query(`UPDATE users SET city=?, profile_step='gender' WHERE telegram_id=?`, [ctx.message.text, ctx.from.id]);
+        const province = user.province;
+        if (!province || !PLACES[province].includes(input)) return ctx.reply('لطفاً یکی از شهرهای لیست را انتخاب کنید.');
+        await db.query(`UPDATE users SET city=?, profile_step='region' WHERE telegram_id=?`, [input, ctx.from.id]);
+        
+        return ctx.reply('🧭 کدوم سمت شهری؟', Markup.keyboard([['📍 شمال', '📍 جنوب'], ['📍 شرق', '📍 غرب'], ['📍 مرکز'], ['❌ لغو ساخت پروفایل']]).resize());
+    }
+    if (currentStep === 'region') {
+        if (!REGIONS.includes(input)) return ctx.reply('لطفاً یکی از جهات جغرافیایی لیست را انتخاب کنید.');
+        await db.query(`UPDATE users SET region=?, profile_step='gender' WHERE telegram_id=?`, [input, ctx.from.id]);
         return ctx.reply('⚧️ جنسیتت رو انتخاب کن:', Markup.keyboard([['👨 مرد'], ['👩 زن'], ['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'gender') {
-        const gender = ctx.message.text;
-        if (gender !== '👨 مرد' && gender !== '👩 زن') return ctx.reply('یکی از گزینه‌ها را انتخاب کن.');
-        await db.query(`UPDATE users SET gender=?, profile_step='photo' WHERE telegram_id=?`, [gender, ctx.from.id]);
+        if (input !== '👨 مرد' && input !== '👩 زن') return ctx.reply('یکی از گزینه‌ها را انتخاب کن.');
+        await db.query(`UPDATE users SET gender=?, profile_step='photo' WHERE telegram_id=?`, [input, ctx.from.id]);
         return ctx.reply('📸 حالا یک عکس از خودت ارسال کن.', Markup.keyboard([['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'photo') {
@@ -309,27 +358,38 @@ bot.on('message', async (ctx, next) => {
         return ctx.reply('✅ پروفایل با موفقیت ذخیره شد. حالا می‌تونی پارتنر پیدا کنی!', await mainMenu(ctx.from.id));
     }
 
-    // --- بخش دوم: ویرایش تک‌مرحله‌ای فیلدها ---
+    // --- ویرایش تک‌مرحله‌ای ---
     if (currentStep === 'edit_name') {
-        if (!ctx.message.text) return ctx.reply('نام معتبر وارد کنید.');
-        await db.query(`UPDATE users SET first_name=?, profile_step=NULL WHERE telegram_id=?`, [ctx.message.text, ctx.from.id]);
+        if (!input) return ctx.reply('نام معتبر وارد کنید.');
+        await db.query(`UPDATE users SET first_name=?, profile_step=NULL WHERE telegram_id=?`, [input, ctx.from.id]);
         return ctx.reply('✅ نام شما با موفقیت بروزرسانی شد.', await mainMenu(ctx.from.id));
     }
     if (currentStep === 'edit_age') {
-        const age = parseInt(ctx.message.text);
+        const age = parseInt(input);
         if (isNaN(age) || age < 10 || age > 100) return ctx.reply('سن معتبر وارد کنید.');
         await db.query(`UPDATE users SET age=?, profile_step=NULL WHERE telegram_id=?`, [age, ctx.from.id]);
         return ctx.reply('✅ سن شما با موفقیت بروزرسانی شد.', await mainMenu(ctx.from.id));
     }
+    if (currentStep === 'edit_province') {
+        if (!PLACES[input]) return ctx.reply('استان معتبر انتخاب کنید.');
+        await db.query(`UPDATE users SET province=?, profile_step='edit_city' WHERE telegram_id=?`, [input, ctx.from.id]);
+        const cityButtons = PLACES[input].map(c => [c]);
+        return ctx.reply('🏙️ حالا شهر جدید را انتخاب کنید:', Markup.keyboard([...cityButtons, ['❌ لغو ویرایش']]).resize());
+    }
     if (currentStep === 'edit_city') {
-        if (!ctx.message.text) return ctx.reply('نام شهر معتبر وارد کنید.');
-        await db.query(`UPDATE users SET city=?, profile_step=NULL WHERE telegram_id=?`, [ctx.message.text, ctx.from.id]);
-        return ctx.reply('✅ شهر شما با موفقیت بروزرسانی شد.', await mainMenu(ctx.from.id));
+        const province = user.province;
+        if (!PLACES[province].includes(input)) return ctx.reply('شهر معتبر انتخاب کنید.');
+        await db.query(`UPDATE users SET city=?, profile_step='edit_region' WHERE telegram_id=?`, [input, ctx.from.id]);
+        return ctx.reply('🧭 کدوم سمت شهری؟', Markup.keyboard([['📍 شمال', '📍 جنوب'], ['📍 شرق', '📍 غرب'], ['📍 مرکز'], ['❌ لغو ویرایش']]).resize());
+    }
+    if (currentStep === 'edit_region') {
+        if (!REGIONS.includes(input)) return ctx.reply('موقعیت معتبر انتخاب کنید.');
+        await db.query(`UPDATE users SET region=?, profile_step=NULL WHERE telegram_id=?`, [input, ctx.from.id]);
+        return ctx.reply('✅ محل سکونت شما با موفقیت بروزرسانی شد.', await mainMenu(ctx.from.id));
     }
     if (currentStep === 'edit_gender') {
-        const gender = ctx.message.text;
-        if (gender !== '👨 مرد' && gender !== '👩 زن') return ctx.reply('لطفاً یکی از گزینه‌ها را انتخاب کنید.');
-        await db.query(`UPDATE users SET gender=?, profile_step=NULL WHERE telegram_id=?`, [gender, ctx.from.id]);
+        if (input !== '👨 مرد' && input !== '👩 زن') return ctx.reply('لطفاً یکی از گزینه‌ها را انتخاب کنید.');
+        await db.query(`UPDATE users SET gender=?, profile_step=NULL WHERE telegram_id=?`, [input, ctx.from.id]);
         return ctx.reply('✅ جنسیت شما با موفقیت بروزرسانی شد.', await mainMenu(ctx.from.id));
     }
     if (currentStep === 'edit_photo') {
@@ -340,7 +400,7 @@ bot.on('message', async (ctx, next) => {
     }
 });
 
-// فوروارد چت ناشناس
+// چت ناشناس
 bot.on('message', async (ctx) => {
     const me = ctx.userState;
     if (!me || me.status !== 'chatting' || !me.partner_id) return;
@@ -354,4 +414,4 @@ bot.on('message', async (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log('🤖 ربات با موفقیت اجرا شد'));
+bot.launch().then(() => console.log('🤖 ربات بدون پروکسی و با منوی لغو جستجو اجرا شد'));

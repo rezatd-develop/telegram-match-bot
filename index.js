@@ -1,10 +1,11 @@
+require('dotenv').config();
+const db = require('./db');
+
 console.log("BOT_TOKEN exists:", !!process.env.BOT_TOKEN);
 console.log("BOT_TOKEN length:", process.env.BOT_TOKEN?.length);
 
-require('dotenv').config();
 
 const { Telegraf, Markup } = require('telegraf');
-const db = require('./db');
 
 // حذف پروکسی و اتصال مستقیم
 const bot = new Telegraf(process.env.BOT_TOKEN);

@@ -43,6 +43,7 @@ const PLACES = {
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
+// ➕ اضافه شدن دکمه مشاهده پروفایل پارتنر به لیست دکمه‌های اصلی برای فیلتر نشدن در چت
 const MAIN_BUTTONS = [
     '🏋️ کجا میخوای بری؟',
     '🎯 پارتنرمو پیدا کن',
@@ -58,11 +59,17 @@ const MAIN_BUTTONS = [
     '❌ لغو ساخت پروفایل',
     '❌ لغو ویرایش',
     '❌ لغو جستجو',
-    '👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر'
+    '👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر',
+    '👁️ مشاهده پروفایل پارتنر'
 ];
 
 function isProfileComplete(user) {
     return !!(user && user.age && user.province && user.city && user.region && user.gender && user.photo_file_id);
+}
+
+// تابع کمکی برای ساخت متن کپشن پروفایل
+function getProfileCaption(user) {
+    return `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}`;
 }
 
 /* =========================
@@ -73,10 +80,10 @@ async function mainMenu(userId) {
     const [rows] = await db.query(`SELECT status FROM users WHERE telegram_id=?`, [userId]);
     const status = rows[0]?.status || 'idle';
 
-    // ۱. اگر کاربر در حال چت باشد
+    // ۱. اگر کاربر در حال چت باشد (➕ اضافه شدن دکمه مشاهده پروفایل پارتنر)
     if (status === 'chatting') {
         return Markup.keyboard([
-            ['🏋️ کجا میخوای بری؟'],
+            ['👁️ مشاهده پروفایل پارتنر'],
             ['🔄 نفر بعدی', '🛑 توقف چت'],
         ]).resize();
     }
@@ -147,7 +154,7 @@ bot.hears('🏋️ کجا میخوای بری؟', async (ctx) => {
 bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🎮 گیم‌نت'], async (ctx) => {
     const category = ctx.message.text;
     await db.query(`UPDATE users SET category=? WHERE telegram_id=?`, [category, ctx.from.id]);
-    await ctx.reply(`✅ دسته‌بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
+    await ctx.reply(`✅ دسته‌ب بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
 });
 
 bot.hears('🔙 برگشت', async (ctx) => {
@@ -212,7 +219,6 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     const [rows] = await db.query(query, queryParams);
 
     if (rows.length === 0) {
-        // تغییر وضعیت به waiting - از این لحظه منو به لغو جستجو تبدیل می‌شود
         await db.query(`UPDATE users SET status='waiting' WHERE telegram_id=?`, [myId]);
         return ctx.reply('🔎 در حال جستجوی پارتنر... لطفاً منتظر بمانید.', await mainMenu(myId));
     }
@@ -221,8 +227,16 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [partner.telegram_id, myId]);
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
 
+    // ➕ ارسال متقابل پروفایل‌ها به محض اتصال دو کاربر به یکدیگر
     await ctx.reply('🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(myId));
-    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(partner.telegram_id)); } catch (e) { }
+    try {
+        await ctx.replyWithPhoto(partner.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(partner)}` });
+    } catch (e) { }
+
+    try {
+        await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(partner.telegram_id));
+        await bot.telegram.sendPhoto(partner.telegram_id, me.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(me)}` });
+    } catch (e) { }
 });
 
 // هندلر دکمه خروج از صف (لغو جستجو)
@@ -271,8 +285,39 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
     const partner = partners[0];
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [partner.telegram_id, myId]);
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
+    
+    // ➕ ارسال متقابل پروفایل‌ها برای پارتنر جدید
     await ctx.reply('🎉 پارتنر جدید پیدا شد!', await mainMenu(myId));
-    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر جدید پیدا شد!', await mainMenu(partner.telegram_id)); } catch (e) { }
+    try {
+        await ctx.replyWithPhoto(partner.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(partner)}` });
+    } catch (e) { }
+
+    try {
+        await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر جدید پیدا شد!', await mainMenu(partner.telegram_id));
+        await bot.telegram.sendPhoto(partner.telegram_id, me.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(me)}` });
+    } catch (e) { }
+});
+
+/* =========================
+    ➕ هندلر دکمه مشاهده پروفایل پارتنر در طول چت
+========================= */
+bot.hears('👁️ مشاهده پروفایل پارتنر', async (ctx) => {
+    const me = ctx.userState;
+    if (!me || me.status !== 'chatting' || !me.partner_id) {
+        return ctx.reply('⚠️ شما در حال حاضر در چت فعال نیستید.');
+    }
+
+    // دریافت اطلاعات پارتنر از دیتابیس
+    const [rows] = await db.query(`SELECT * FROM users WHERE telegram_id=?`, [me.partner_id]);
+    const partner = rows[0];
+
+    if (!partner) {
+        return ctx.reply('⚠️ اطلاعات پارتنر یافت نشد.');
+    }
+
+    await ctx.replyWithPhoto(partner.photo_file_id, {
+        caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(partner)}`
+    });
 });
 
 /* =========================
@@ -285,7 +330,7 @@ bot.hears('👤 پروفایل', async (ctx) => {
 
     if (isProfileComplete(user)) {
         return ctx.replyWithPhoto(user.photo_file_id, {
-            caption: `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}`,
+            caption: getProfileCaption(user),
             ...Markup.keyboard([['⚙️ ویرایش پروفایل'], ['🔙 برگشت']]).resize()
         });
     }

@@ -43,7 +43,7 @@ const PLACES = {
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
-// لیست دکمه‌های اصلی برای فیلتر نشدن در چت
+// لیست دکمه‌های اصلی برای فیلتر نشدن در چت (گیم‌نت حذف و گزینه‌های جدید اضافه شدند)
 const MAIN_BUTTONS = [
     '🏋️ کجا میخوای بری؟',
     '🎯 پارتنرمو پیدا کن',
@@ -53,7 +53,8 @@ const MAIN_BUTTONS = [
     '🏋️ باشگاه',
     '☕ کافه',
     '🚬 یه سیگاری بکشیم',
-    '🎮 گیم‌نت',
+    '🫖 قهوه خونه',
+    '🚶‍♂️ خیابون گردی',
     '👤 پروفایل',
     '⚙️ ویرایش پروفایل',
     '❌ لغو ساخت پروفایل',
@@ -112,10 +113,12 @@ async function mainMenu(userId) {
     ]).resize();
 }
 
+// اصلاح منوی دسته‌بندی‌ها
 function categoryMenu() {
     return Markup.keyboard([
         ['🏋️ باشگاه', '☕ کافه'],
-        ['🚬 یه سیگاری بکشیم', '🎮 گیم‌نت'],
+        ['🚬 یه سیگاری بکشیم', '🫖 قهوه خونه'],
+        ['🚶‍♂️ خیابون گردی'],
         ['🔙 برگشت']
     ]).resize();
 }
@@ -148,7 +151,6 @@ bot.use(async (ctx, next) => {
 bot.use(async (ctx, next) => {
     if (!ctx.from) return next();
 
-    // اگر دکمه "عضو شدم" فشرده شد، اجازه بده به هندلر خودش برسه
     if (ctx.message && ctx.message.text === '🔗 عضو شدم') {
         return next();
     }
@@ -202,7 +204,8 @@ bot.hears('🏋️ کجا میخوای بری؟', async (ctx) => {
     await ctx.reply('یکی از گزینه‌های زیر را انتخاب کن:', categoryMenu());
 });
 
-bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🎮 گیم‌نت'], async (ctx) => {
+// اصلاح هندلر دریافت دسته‌بندی‌ها با گزینه‌های جدید
+bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🫖 قهوه خونه', '🚶‍♂️ خیابون گردی'], async (ctx) => {
     const category = ctx.message.text;
     await db.query(`UPDATE users SET category=? WHERE telegram_id=?`, [category, ctx.from.id]);
     await ctx.reply(`✅ دسته‌بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
@@ -251,7 +254,6 @@ bot.hears('🎯 پارتنرمو پیدا کن', async (ctx) => {
     );
 });
 
-// هندل کردن انتخاب محدوده جستجو و ذخیره آن در دیتابیس
 bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر'], async (ctx) => {
     const myId = ctx.from.id;
     const me = ctx.userState;
@@ -259,7 +261,6 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
 
     const scope = ctx.message.text;
     
-    // ذخیره محدوده جستجو در دیتابیس برای استفاده در دکمه نفر بعدی
     await db.query(`UPDATE users SET search_scope=? WHERE telegram_id=?`, [scope, myId]);
 
     let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
@@ -293,7 +294,6 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     } catch (e) { }
 });
 
-// هندلر دکمه خروج از صف (لغو جستجو)
 bot.hears('❌ لغو جستجو', async (ctx) => {
     const myId = ctx.from.id;
     await db.query(`UPDATE users SET status='idle' WHERE telegram_id=?`, [myId]);
@@ -330,7 +330,6 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
     
-    // اعمال فیلتر هوشمند بر اساس انتخاب قبلی کاربر
     let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
     let queryParams = [me.category, me.city, myId];
 
@@ -450,7 +449,6 @@ bot.on('message', async (ctx, next) => {
     const currentStep = user.profile_step;
     const input = ctx.message.text;
 
-    // --- ساخت اولیه پروفایل ---
     if (currentStep === 'name') {
         if (!input) return ctx.reply('لطفاً نام را متنی ارسال کن.');
         await db.query(`UPDATE users SET first_name=?, profile_step='age' WHERE telegram_id=?`, [input, ctx.from.id]);
@@ -495,7 +493,6 @@ bot.on('message', async (ctx, next) => {
         return ctx.reply('✅ پروفایل با موفقیت ذخیره شد. حالا می‌تونی پارتنر پیدا کنی!', await mainMenu(ctx.from.id));
     }
 
-    // --- ویرایش تک‌مرحله‌ای ---
     if (currentStep === 'edit_name') {
         if (!input) return ctx.reply('نام معتبر وارد کنید.');
         await db.query(`UPDATE users SET first_name=?, profile_step=NULL WHERE telegram_id=?`, [input, ctx.from.id]);
@@ -551,4 +548,4 @@ bot.on('message', async (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log('🤖 ربات با قفل کانال و اصلاحیه فیلتر نفر بعدی اجرا شد'));
+bot.launch().then(() => console.log('🤖 ربات با دسته‌بندی‌های جدید (قهوه خونه و خیابون گردی) با موفقیت اجرا شد'));

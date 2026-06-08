@@ -43,9 +43,9 @@ const PLACES = {
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
-// ➕ اضافه شدن دکمه مشاهده پروفایل پارتنر به لیست دکمه‌های اصلی برای فیلتر نشدن در چت
+// لیست دکمه‌های اصلی
 const MAIN_BUTTONS = [
-    '🏋️ کجا میخوای بری؟',
+    '🏋️ کجا میخوای بری？',
     '🎯 پارتنرمو پیدا کن',
     '🛑 توقف چت',
     '🔄 نفر بعدی',
@@ -80,7 +80,6 @@ async function mainMenu(userId) {
     const [rows] = await db.query(`SELECT status FROM users WHERE telegram_id=?`, [userId]);
     const status = rows[0]?.status || 'idle';
 
-    // ۱. اگر کاربر در حال چت باشد (➕ اضافه شدن دکمه مشاهده پروفایل پارتنر)
     if (status === 'chatting') {
         return Markup.keyboard([
             ['👁️ مشاهده پروفایل پارتنر'],
@@ -88,14 +87,12 @@ async function mainMenu(userId) {
         ]).resize();
     }
 
-    // ۲. اگر کاربر در صف انتظار پارتنر باشد (فقط دکمه لغو جستجو)
     if (status === 'waiting') {
         return Markup.keyboard([
             ['❌ لغو جستجو']
         ]).resize();
     }
 
-    // ۳. منوی عادی در وضعیت آزاد (idle)
     return Markup.keyboard([
         ['🏋️ کجا میخوای بری؟'],
         ['🎯 پارتنرمو پیدا کن'],
@@ -207,6 +204,10 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     if (!me) return;
 
     const scope = ctx.message.text;
+    
+    // 🛑 اضافه شده: ذخیره انتخاب کاربر در دیتابیس برای استفاده‌های بعدی (مثل دکمه نفر بعدی)
+    await db.query(`UPDATE users SET search_scope=? WHERE telegram_id=?`, [scope, myId]);
+
     let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
     let queryParams = [me.category, me.city, myId];
 
@@ -227,7 +228,6 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [partner.telegram_id, myId]);
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
 
-    // ➕ ارسال متقابل پروفایل‌ها به محض اتصال دو کاربر به یکدیگر
     await ctx.reply('🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(myId));
     try {
         await ctx.replyWithPhoto(partner.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(partner)}` });
@@ -275,18 +275,29 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
     }
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
-    const [partners] = await db.query(`SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting' LIMIT 1`, [me.category, me.city, myId]);
+    
+    // 🛑 اضافه شده: پیاده‌سازی کوئری هوشمند بر اساس انتخاب قبلی کاربر (search_scope)
+    let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
+    let queryParams = [me.category, me.city, myId];
+
+    if (me.search_scope === '👥 افراد نزدیک (هم‌محله‌ای)') {
+        query += ` AND region=?`;
+        queryParams.push(me.region);
+    }
+
+    query += ` LIMIT 1`;
+    const [partners] = await db.query(query, queryParams);
 
     if (partners.length === 0) {
         await db.query(`UPDATE users SET status='waiting' WHERE telegram_id=?`, [myId]);
-        return ctx.reply('🔎 در حال جستجوی نفر بعدی در سطح شهر...', await mainMenu(myId));
+        const textMsg = me.search_scope === '👥 افراد نزدیک (هم‌محله‌ای)' ? '🔎 در حال جستجوی نفر بعدی در هم‌محله‌ای‌های شما...' : '🔎 در حال جستجوی نفر بعدی در سطح شهر...';
+        return ctx.reply(textMsg, await mainMenu(myId));
     }
 
     const partner = partners[0];
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [partner.telegram_id, myId]);
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
     
-    // ➕ ارسال متقابل پروفایل‌ها برای پارتنر جدید
     await ctx.reply('🎉 پارتنر جدید پیدا شد!', await mainMenu(myId));
     try {
         await ctx.replyWithPhoto(partner.photo_file_id, { caption: `👤 پروفایل هم‌صحبت شما:\n\n${getProfileCaption(partner)}` });
@@ -299,7 +310,7 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 });
 
 /* =========================
-    ➕ هندلر دکمه مشاهده پروفایل پارتنر در طول چت
+    هندلر دکمه مشاهده پروفایل پارتنر در طول چت
 ========================= */
 bot.hears('👁️ مشاهده پروفایل پارتنر', async (ctx) => {
     const me = ctx.userState;
@@ -307,7 +318,6 @@ bot.hears('👁️ مشاهده پروفایل پارتنر', async (ctx) => {
         return ctx.reply('⚠️ شما در حال حاضر در چت فعال نیستید.');
     }
 
-    // دریافت اطلاعات پارتنر از دیتابیس
     const [rows] = await db.query(`SELECT * FROM users WHERE telegram_id=?`, [me.partner_id]);
     const partner = rows[0];
 
@@ -487,4 +497,4 @@ bot.on('message', async (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log('🤖 ربات بدون پروکسی و با منوی لغو جستجو اجرا شد'));
+bot.launch().then(() => console.log('🤖 ربات هوشمند با فیلتر نفر بعدی اجرا شد'));

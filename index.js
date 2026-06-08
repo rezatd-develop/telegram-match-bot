@@ -1,18 +1,6 @@
 require('dotenv').config();
 const db = require('./db');
 
-console.log("BOT_TOKEN exists:", !!process.env.BOT_TOKEN);
-console.log("BOT_TOKEN length:", process.env.BOT_TOKEN?.length);
-
-console.log({
-  BOT_TOKEN: !!process.env.BOT_TOKEN,
-  DB_HOST: process.env.DB_HOST,
-  DB_USER: process.env.DB_USER,
-  DB_NAME: process.env.DB_NAME,
-  DB_PASS: !!process.env.DB_PASS
-});
-
-
 const { Telegraf, Markup } = require('telegraf');
 
 // حذف پروکسی و اتصال مستقیم
@@ -20,9 +8,37 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // دیتابیس کوچک استان‌ها و شهرها
 const PLACES = {
-    'تهران': ['تهران', 'شهریار', 'اسلامشهر', 'ری', 'پاکدشت'],
-    'اصفهان': ['اصفهان', 'کاشان', 'خمینی‌شهر', 'نجف‌آباد'],
-    'فارس': ['شیراز', 'مرودشت', 'جهرم', 'فسا']
+    'آذربایجان شرقی': ['تبریز', 'مراغه', 'مرند', 'میانه', 'اهر', 'بناب'],
+    'آذربایجان غربی': ['ارومیه', 'خوی', 'مهاباد', 'بوکان', 'میاندوآب', 'سلماس'],
+    'اردبیل': ['اردبیل', 'پارس‌آباد', 'مشگین‌شهر', 'خلخال', 'گرمی'],
+    'اصفهان': ['اصفهان', 'کاشان', 'خمینی‌شهر', 'نجف‌آباد', 'شاهین‌شهر', 'فولادشهر'],
+    'البرز': ['کرج', 'فردیس', 'نظرآباد', 'هشتگرد', 'محمدشهر'],
+    'ایلام': ['ایلام', 'دهلران', 'ایوان', 'آبدانان', 'مهران'],
+    'بوشهر': ['بوشهر', 'برازجان', 'گناوه', 'کنگان', 'دیر'],
+    'تهران': ['تهران', 'ری', 'اسلامشهر', 'شهریار', 'پاکدشت', 'ورامین', 'رباط‌کریم', 'پردیس'],
+    'چهارمحال و بختیاری': ['شهرکرد', 'بروجن', 'فارسان', 'لردگان'],
+    'خراسان جنوبی': ['بیرجند', 'قائن', 'فردوس', 'طبس'],
+    'خراسان رضوی': ['مشهد', 'نیشابور', 'سبزوار', 'تربت حیدریه', 'قوچان', 'کاشمر'],
+    'خراسان شمالی': ['بجنورد', 'شیروان', 'اسفراین', 'فاروج'],
+    'خوزستان': ['اهواز', 'آبادان', 'خرمشهر', 'دزفول', 'اندیمشک', 'ماهشهر', 'بهبهان'],
+    'زنجان': ['زنجان', 'ابهر', 'خرمدره', 'قیدار'],
+    'سمنان': ['سمنان', 'شاهرود', 'دامغان', 'گرمسار'],
+    'سیستان و بلوچستان': ['زاهدان', 'چابهار', 'ایرانشهر', 'زابل', 'خاش'],
+    'فارس': ['شیراز', 'مرودشت', 'جهرم', 'فسا', 'کازرون', 'لار', 'داراب'],
+    'قزوین': ['قزوین', 'الوند', 'تاکستان', 'آبیک'],
+    'قم': ['قم'],
+    'کردستان': ['سنندج', 'سقز', 'مریوان', 'بانه', 'قروه'],
+    'کرمان': ['کرمان', 'رفسنجان', 'سیرجان', 'جیرفت', 'بم'],
+    'کرمانشاه': ['کرمانشاه', 'اسلام‌آباد غرب', 'جوانرود', 'سنقر'],
+    'کهگیلویه و بویراحمد': ['یاسوج', 'دوگنبدان', 'دهدشت'],
+    'گلستان': ['گرگان', 'گنبد کاووس', 'علی‌آباد', 'آق‌قلا'],
+    'گیلان': ['رشت', 'انزلی', 'لاهیجان', 'آستارا', 'رودسر'],
+    'لرستان': ['خرم‌آباد', 'بروجرد', 'دورود', 'الیگودرز', 'کوهدشت'],
+    'مازندران': ['ساری', 'بابل', 'آمل', 'قائم‌شهر', 'نوشهر', 'چالوس'],
+    'مرکزی': ['اراک', 'ساوه', 'خمین', 'محلات'],
+    'هرمزگان': ['بندرعباس', 'میناب', 'قشم', 'بندر لنگه', 'حاجی‌آباد'],
+    'همدان': ['همدان', 'ملایر', 'نهاوند', 'تویسرکان'],
+    'یزد': ['یزد', 'میبد', 'اردکان', 'بافق']
 };
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
@@ -206,7 +222,7 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
 
     await ctx.reply('🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(myId));
-    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(partner.telegram_id)); } catch (e) {}
+    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر پیدا شد!\nمی‌تونی گفتگو رو شروع کنی.', await mainMenu(partner.telegram_id)); } catch (e) { }
 });
 
 // هندلر دکمه خروج از صف (لغو جستجو)
@@ -229,7 +245,7 @@ bot.hears('🛑 توقف چت', async (ctx) => {
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
     if (partnerId) {
         await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [partnerId]);
-        try { await bot.telegram.sendMessage(partnerId, '❌ طرف مقابل گفتگو را ترک کرد.', await mainMenu(partnerId)); } catch (e) {}
+        try { await bot.telegram.sendMessage(partnerId, '❌ طرف مقابل گفتگو را ترک کرد.', await mainMenu(partnerId)); } catch (e) { }
     }
     await ctx.reply('❌ گفتگو پایان یافت.', await mainMenu(myId));
 });
@@ -241,7 +257,7 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 
     if (me.partner_id) {
         await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [me.partner_id]);
-        try { await bot.telegram.sendMessage(me.partner_id, '🔄 طرف مقابل به سراغ نفر بعدی رفت.', await mainMenu(me.partner_id)); } catch (e) {}
+        try { await bot.telegram.sendMessage(me.partner_id, '🔄 طرف مقابل به سراغ نفر بعدی رفت.', await mainMenu(me.partner_id)); } catch (e) { }
     }
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
@@ -256,7 +272,7 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [partner.telegram_id, myId]);
     await db.query(`UPDATE users SET status='chatting', partner_id=? WHERE telegram_id=?`, [myId, partner.telegram_id]);
     await ctx.reply('🎉 پارتنر جدید پیدا شد!', await mainMenu(myId));
-    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر جدید پیدا شد!', await mainMenu(partner.telegram_id)); } catch (e) {}
+    try { await bot.telegram.sendMessage(partner.telegram_id, '🎉 پارتنر جدید پیدا شد!', await mainMenu(partner.telegram_id)); } catch (e) { }
 });
 
 /* =========================
@@ -298,13 +314,13 @@ bot.hears(['✏️ نام', '✏️ سن', '✏️ محل سکونت', '✏️ �
 
     if (field === '✏️ نام') { step = 'edit_name'; msg = '👤 نام جدید را وارد کنید:'; }
     else if (field === '✏️ سن') { step = 'edit_age'; msg = '🎂 سن جدید را وارد کنید:'; }
-    else if (field === '✏️ محل سکونت') { 
-        step = 'edit_province'; 
-        msg = '🗺️ استان جدید خود را انتخاب کنید:'; 
+    else if (field === '✏️ محل سکونت') {
+        step = 'edit_province';
+        msg = '🗺️ استان جدید خود را انتخاب کنید:';
         keyboard = Markup.keyboard([...Object.keys(PLACES).map(p => [p]), ['❌ لغو ویرایش']]).resize();
     }
-    else if (field === '✏️ جنسیت') { 
-        step = 'edit_gender'; msg = '⚧️ جنسیت جدید را انتخاب کنید:'; 
+    else if (field === '✏️ جنسیت') {
+        step = 'edit_gender'; msg = '⚧️ جنسیت جدید را انتخاب کنید:';
         keyboard = Markup.keyboard([['👨 مرد'], ['👩 زن'], ['❌ لغو ویرایش']]).resize();
     }
     else if (field === '✏️ عکس') { step = 'edit_photo'; msg = '📸 عکس جدید را ارسال کنید:'; }
@@ -335,14 +351,14 @@ bot.on('message', async (ctx, next) => {
         const age = parseInt(input);
         if (isNaN(age) || age < 10 || age > 100) return ctx.reply('سن معتبر وارد کن.');
         await db.query(`UPDATE users SET age=?, profile_step='province' WHERE telegram_id=?`, [age, ctx.from.id]);
-        
+
         const provinceButtons = Object.keys(PLACES).map(p => [p]);
         return ctx.reply('🗺️ استان محل سکونتت رو انتخاب کن:', Markup.keyboard([...provinceButtons, ['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'province') {
         if (!PLACES[input]) return ctx.reply('لطفاً یکی از استان‌های لیست را انتخاب کنید.');
         await db.query(`UPDATE users SET province=?, profile_step='city' WHERE telegram_id=?`, [input, ctx.from.id]);
-        
+
         const cityButtons = PLACES[input].map(c => [c]);
         return ctx.reply('🏙️ حالا شهرت رو انتخاب کن:', Markup.keyboard([...cityButtons, ['❌ لغو ساخت پروفایل']]).resize());
     }
@@ -350,7 +366,7 @@ bot.on('message', async (ctx, next) => {
         const province = user.province;
         if (!province || !PLACES[province].includes(input)) return ctx.reply('لطفاً یکی از شهرهای لیست را انتخاب کنید.');
         await db.query(`UPDATE users SET city=?, profile_step='region' WHERE telegram_id=?`, [input, ctx.from.id]);
-        
+
         return ctx.reply('🧭 کدوم سمت شهری؟', Markup.keyboard([['📍 شمال', '📍 جنوب'], ['📍 شرق', '📍 غرب'], ['📍 مرکز'], ['❌ لغو ساخت پروفایل']]).resize());
     }
     if (currentStep === 'region') {

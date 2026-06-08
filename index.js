@@ -4,6 +4,14 @@ const db = require('./db');
 console.log("BOT_TOKEN exists:", !!process.env.BOT_TOKEN);
 console.log("BOT_TOKEN length:", process.env.BOT_TOKEN?.length);
 
+console.log({
+  BOT_TOKEN: !!process.env.BOT_TOKEN,
+  DB_HOST: process.env.DB_HOST,
+  DB_USER: process.env.DB_USER,
+  DB_NAME: process.env.DB_NAME,
+  DB_PASS: !!process.env.DB_PASS
+});
+
 
 const { Telegraf, Markup } = require('telegraf');
 

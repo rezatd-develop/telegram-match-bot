@@ -43,7 +43,7 @@ const PLACES = {
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
-// لیست دکمه‌های اصلی برای فیلتر نشدن در چت (گیم‌نت حذف و گزینه‌های جدید اضافه شدند)
+// لیست دکمه‌های اصلی برای فیلتر نشدن در چت
 const MAIN_BUTTONS = [
     '🏋️ کجا میخوای بری؟',
     '🎯 پارتنرمو پیدا کن',
@@ -55,6 +55,7 @@ const MAIN_BUTTONS = [
     '🚬 یه سیگاری بکشیم',
     '🫖 قهوه خونه',
     '🚶‍♂️ خیابون گردی',
+    '🤷‍♂️ فرقی نمیکنه',
     '👤 پروفایل',
     '⚙️ ویرایش پروفایل',
     '❌ لغو ساخت پروفایل',
@@ -69,12 +70,10 @@ function isProfileComplete(user) {
     return !!(user && user.age && user.province && user.city && user.region && user.gender && user.photo_file_id);
 }
 
-// تابع کمکی برای ساخت متن کپشن پروفایل
 function getProfileCaption(user) {
-    return `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}`;
+    return `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}\n🎯 مقصد ترجیحی: ${user.category || 'ثبت نشده'}`;
 }
 
-// تابع کمکی بررسی عضویت در کانال
 async function checkChannelMembership(ctx, userId) {
     try {
         const member = await ctx.telegram.getChatMember('@mikhamberamchannel', userId);
@@ -86,7 +85,7 @@ async function checkChannelMembership(ctx, userId) {
 }
 
 /* =========================
-    Menus (منوی هوشمند بر اساس وضعیت کاربر)
+    Menus 
 ========================= */
 
 async function mainMenu(userId) {
@@ -113,12 +112,13 @@ async function mainMenu(userId) {
     ]).resize();
 }
 
-// اصلاح منوی دسته‌بندی‌ها
+// منوی دسته‌بندی با دکمه بزرگ «فرقی نمیکنه»
 function categoryMenu() {
     return Markup.keyboard([
         ['🏋️ باشگاه', '☕ کافه'],
         ['🚬 یه سیگاری بکشیم', '🫖 قهوه خونه'],
         ['🚶‍♂️ خیابون گردی'],
+        ['🤷‍♂️ فرقی نمیکنه'], // دکمه بزرگ در یک ردیف مجزا
         ['🔙 برگشت']
     ]).resize();
 }
@@ -135,7 +135,6 @@ function editProfileMenu() {
     Middleware
 ========================= */
 
-// ۱. میدل‌ور دریافت اطلاعات کاربر از دیتابیس
 bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     try {
@@ -147,7 +146,6 @@ bot.use(async (ctx, next) => {
     return next();
 });
 
-// ۲. میدل‌ور قفل کانال (جوین اجباری)
 bot.use(async (ctx, next) => {
     if (!ctx.from) return next();
 
@@ -204,8 +202,7 @@ bot.hears('🏋️ کجا میخوای بری؟', async (ctx) => {
     await ctx.reply('یکی از گزینه‌های زیر را انتخاب کن:', categoryMenu());
 });
 
-// اصلاح هندلر دریافت دسته‌بندی‌ها با گزینه‌های جدید
-bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🫖 قهوه خونه', '🚶‍♂️ خیابون گردی'], async (ctx) => {
+bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🫖 قهوه خونه', '🚶‍♂️ خیابون گردی', '🤷‍♂️ فرقی نمیکنه'], async (ctx) => {
     const category = ctx.message.text;
     await db.query(`UPDATE users SET category=? WHERE telegram_id=?`, [category, ctx.from.id]);
     await ctx.reply(`✅ دسته‌بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
@@ -260,11 +257,17 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
     if (!me) return;
 
     const scope = ctx.message.text;
-    
     await db.query(`UPDATE users SET search_scope=? WHERE telegram_id=?`, [scope, myId]);
 
-    let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
-    let queryParams = [me.category, me.city, myId];
+    // 🛑 منطق هوشمند سازی کوئری بر اساس دکمه "فرقی نمیکنه"
+    let query = `SELECT * FROM users WHERE city=? AND telegram_id != ? AND status='waiting'`;
+    let queryParams = [me.city, myId];
+
+    // اگر کاربر گزینه‌ای غیر از "فرقی نمیکنه" انتخاب کرده بود، فیلتر دقیق دسته بندی اعمال شود
+    if (me.category !== '🤷‍♂️ فرقی نمیکنه') {
+        query += ` AND (category = ? OR category = '🤷‍♂️ فرقی نمیکنه')`;
+        queryParams.push(me.category);
+    }
 
     if (scope === '👥 افراد نزدیک (هم‌محله‌ای)') {
         query += ` AND region=?`;
@@ -330,8 +333,14 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
     
-    let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
-    let queryParams = [me.category, me.city, myId];
+    // 🛑 منطق هوشمند سازی کوئری دکمه نفر بعدی بر اساس دکمه "فرقی نمیکنه"
+    let query = `SELECT * FROM users WHERE city=? AND telegram_id != ? AND status='waiting'`;
+    let queryParams = [me.city, myId];
+
+    if (me.category !== '🤷‍♂️ فرقی نمیکنه') {
+        query += ` AND (category = ? OR category = '🤷‍♂️ فرقی نمیکنه')`;
+        queryParams.push(me.category);
+    }
 
     if (me.search_scope === '👥 افراد نزدیک (هم‌محله‌ای)') {
         query += ` AND region=?`;
@@ -363,7 +372,7 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 });
 
 /* =========================
-    هندلر دکمه مشاهده پروفایل پارتنر در طول چت
+    مشاهده پروفایل پارتنر 
 ========================= */
 bot.hears('👁️ مشاهده پروفایل پارتنر', async (ctx) => {
     const me = ctx.userState;
@@ -548,4 +557,4 @@ bot.on('message', async (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log('🤖 ربات با دسته‌بندی‌های جدید (قهوه خونه و خیابون گردی) با موفقیت اجرا شد'));
+bot.launch().then(() => console.log('🤖 ربات با دکمه فرقی نمیکنه با موفقیت اجرا شد'));

@@ -34,7 +34,7 @@ const PLACES = {
     'گلستان': ['گرگان', 'گنبد کاووس', 'علی‌آباد', 'آق‌قلا'],
     'گیلان': ['رشت', 'انزلی', 'لاهیجان', 'آستارا', 'رودسر'],
     'لرستان': ['خرم‌آباد', 'بروجرد', 'دورود', 'الیگودرز', 'کوهدشت'],
-    'مازندران': ['ساری', 'بابل', 'آمل', 'قائم‌شهر', 'نوشهر', 'چالوس'],
+    'مازندران': ['sari', 'بابل', 'آمل', 'قائم‌شهر', 'نوشهر', 'چالوس'],
     'مرکزی': ['اراک', 'ساوه', 'خمین', 'محلات'],
     'هرمزگان': ['بندرعباس', 'میناب', 'قشم', 'بندر لنگه', 'حاجی‌آباد'],
     'همدان': ['همدان', 'ملایر', 'نهاوند', 'تویسرکان'],
@@ -43,9 +43,9 @@ const PLACES = {
 
 const REGIONS = ['📍 شرق', '📍 غرب', '📍 شمال', '📍 جنوب', '📍 مرکز'];
 
-// لیست دکمه‌های اصلی
+// لیست دکمه‌های اصلی برای فیلتر نشدن در چت
 const MAIN_BUTTONS = [
-    '🏋️ کجا میخوای بری？',
+    '🏋️ کجا میخوای بری؟',
     '🎯 پارتنرمو پیدا کن',
     '🛑 توقف چت',
     '🔄 نفر بعدی',
@@ -60,7 +60,8 @@ const MAIN_BUTTONS = [
     '❌ لغو ویرایش',
     '❌ لغو جستجو',
     '👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر',
-    '👁️ مشاهده پروفایل پارتنر'
+    '👁️ مشاهده پروفایل پارتنر',
+    '🔗 عضو شدم'
 ];
 
 function isProfileComplete(user) {
@@ -70,6 +71,17 @@ function isProfileComplete(user) {
 // تابع کمکی برای ساخت متن کپشن پروفایل
 function getProfileCaption(user) {
     return `👤 نام: ${user.first_name}\n🎂 سن: ${user.age}\n🏙️ موقعیت: استان ${user.province}، شهر ${user.city} (${user.region})\n⚧️ جنسیت: ${user.gender}`;
+}
+
+// تابع کمکی بررسی عضویت در کانال
+async function checkChannelMembership(ctx, userId) {
+    try {
+        const member = await ctx.telegram.getChatMember('@mikhamberamchannel', userId);
+        return ['member', 'administrator', 'creator'].includes(member.status);
+    } catch (error) {
+        console.error('Error checking channel membership:', error);
+        return false; 
+    }
 }
 
 /* =========================
@@ -120,6 +132,7 @@ function editProfileMenu() {
     Middleware
 ========================= */
 
+// ۱. میدل‌ور دریافت اطلاعات کاربر از دیتابیس
 bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     try {
@@ -129,6 +142,47 @@ bot.use(async (ctx, next) => {
         console.error('Database Error in Middleware:', err);
     }
     return next();
+});
+
+// ۲. میدل‌ور قفل کانال (جوین اجباری)
+bot.use(async (ctx, next) => {
+    if (!ctx.from) return next();
+
+    // اگر دکمه "عضو شدم" فشرده شد، اجازه بده به هندلر خودش برسه
+    if (ctx.message && ctx.message.text === '🔗 عضو شدم') {
+        return next();
+    }
+
+    const isMember = await checkChannelMembership(ctx, ctx.from.id);
+
+    if (!isMember) {
+        return ctx.reply(
+            `⚠️ برای استفاده از ربات، ابتدا باید در کانال ما عضو شوید.\n\n📢 @mikhamberamchannel\n\nپس از عضویت، روی دکمه «🔗 عضو شدم» کلیک کنید تا ربات برای شما فعال شود.`,
+            Markup.keyboard([
+                ['🔗 عضو شدم']
+            ]).resize()
+        );
+    }
+
+    return next();
+});
+
+/* =========================
+    هندلر دکمه بررسی عضویت کانال
+========================= */
+bot.hears('🔗 عضو شدم', async (ctx) => {
+    const isMember = await checkChannelMembership(ctx, ctx.from.id);
+
+    if (isMember) {
+        await ctx.reply('✅ عضویت شما تایید شد! به ربات خوش آمدید.', await mainMenu(ctx.from.id));
+    } else {
+        await ctx.reply(
+            '❌ شما هنوز در کانال عضو نشده‌اید.\nلطفاً ابتدا وارد کانال زیر شوید و سپس مجدداً تلاش کنید:\n\n📢 @mikhamberamchannel',
+            Markup.keyboard([
+                ['🔗 عضو شدم']
+            ]).resize()
+        );
+    }
 });
 
 /* =========================
@@ -151,7 +205,7 @@ bot.hears('🏋️ کجا میخوای بری؟', async (ctx) => {
 bot.hears(['🏋️ باشگاه', '☕ کافه', '🚬 یه سیگاری بکشیم', '🎮 گیم‌نت'], async (ctx) => {
     const category = ctx.message.text;
     await db.query(`UPDATE users SET category=? WHERE telegram_id=?`, [category, ctx.from.id]);
-    await ctx.reply(`✅ دسته‌ب بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
+    await ctx.reply(`✅ دسته‌بندی انتخاب شد:\n${category}`, await mainMenu(ctx.from.id));
 });
 
 bot.hears('🔙 برگشت', async (ctx) => {
@@ -197,7 +251,7 @@ bot.hears('🎯 پارتنرمو پیدا کن', async (ctx) => {
     );
 });
 
-// هندل کردن انتخاب محدوده جستجو و قفل کردن منو روی «لغو جستجو»
+// هندل کردن انتخاب محدوده جستجو و ذخیره آن در دیتابیس
 bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل سطح شهر'], async (ctx) => {
     const myId = ctx.from.id;
     const me = ctx.userState;
@@ -205,7 +259,7 @@ bot.hears(['👥 افراد نزدیک (هم‌محله‌ای)', '🏙️ کل 
 
     const scope = ctx.message.text;
     
-    // 🛑 اضافه شده: ذخیره انتخاب کاربر در دیتابیس برای استفاده‌های بعدی (مثل دکمه نفر بعدی)
+    // ذخیره محدوده جستجو در دیتابیس برای استفاده در دکمه نفر بعدی
     await db.query(`UPDATE users SET search_scope=? WHERE telegram_id=?`, [scope, myId]);
 
     let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
@@ -276,7 +330,7 @@ bot.hears('🔄 نفر بعدی', async (ctx) => {
 
     await db.query(`UPDATE users SET status='idle', partner_id=NULL WHERE telegram_id=?`, [myId]);
     
-    // 🛑 اضافه شده: پیاده‌سازی کوئری هوشمند بر اساس انتخاب قبلی کاربر (search_scope)
+    // اعمال فیلتر هوشمند بر اساس انتخاب قبلی کاربر
     let query = `SELECT * FROM users WHERE category=? AND city=? AND telegram_id != ? AND status='waiting'`;
     let queryParams = [me.category, me.city, myId];
 
@@ -497,4 +551,4 @@ bot.on('message', async (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log('🤖 ربات هوشمند با فیلتر نفر بعدی اجرا شد'));
+bot.launch().then(() => console.log('🤖 ربات با قفل کانال و اصلاحیه فیلتر نفر بعدی اجرا شد'));

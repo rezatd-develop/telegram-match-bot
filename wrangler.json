@@ -1,0 +1,16 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "warum-allein-bot",
+    "main": "src/index.js",
+    "compatibility_date": "2026-07-22",
+    "compatibility_flags": [
+        "nodejs_compat"
+    ],
+    "d1_databases": [
+        {
+            "binding": "warum_allein_db",
+            "database_name": "warum-allein-db",
+            "database_id": "9aaca0af-02b1-4d0a-8128-11a58bfa19a3"
+        }
+    ]
+}
